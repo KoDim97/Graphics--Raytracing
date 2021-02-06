@@ -1,4 +1,4 @@
-# Graphics--Raytracing
+# Graphics-Raytracing
 That's a class project.
 ## Requirement description
 - fork https://gist.github.com/rossant/6046463
