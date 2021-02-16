@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 w = 400
 h = 300
 
+
 def normalize(x):
     x /= np.linalg.norm(x)
     return x
@@ -168,6 +169,7 @@ r = float(w) / h
 # Screen coordinates: x0, y0, x1, y1.
 S = (-1., -1. / r + .25, 1., 1. / r + .25)
 
+
 # Calculate direction of refraction ray
 def refract(v, n, q):
     nv = np.dot(n, v)
@@ -181,7 +183,7 @@ def refract(v, n, q):
     return (a * v) - (b * n)
 
 
-def process(rayO, rayD, density, col, depth, isOutIntersection):
+def process(rayO, rayD, density, col, depth, is_outside_object):
     if depth >= depth_max:
         return True
 
@@ -194,19 +196,20 @@ def process(rayO, rayD, density, col, depth, isOutIntersection):
     col += density * (1 - obj.get('transparency', 0.)) * col_ray
 
     # Reflection: create a new ray.
-    rayO1, rayD1 = M + N * isOutIntersection * .0001, normalize(rayD - 2 * np.dot(rayD, N) * N)
-    if process(rayO1, rayD1, density * obj.get('reflection', 1.), col, depth + 1, isOutIntersection):
+    rayO1, rayD1 = M + N * is_outside_object * .0001, normalize(rayD - 2 * np.dot(rayD, N) * N)
+    if process(rayO1, rayD1, density * obj.get('reflection', 1.), col, depth + 1, is_outside_object):
         return False
 
     # Refraction: create a new ray.
     direction = refract(rayD, N, obj.get('refraction', 1.))
     if direction is None:
         return False
-    rayO2, rayD2 = M - N * isOutIntersection * .0001, direction
-    if process(rayO2, rayD2, density * obj.get('transparency', 1.), col, depth + 1, isOutIntersection * (-1)):
+    rayO2, rayD2 = M - N * is_outside_object * .0001, direction
+    if process(rayO2, rayD2, density * obj.get('transparency', 1.), col, depth + 1, is_outside_object * (-1)):
         return False
 
     return False
+
 
 # Loop through all pixels.
 for i, x in enumerate(np.linspace(S[0], S[2], w)):
@@ -219,9 +222,9 @@ for i, x in enumerate(np.linspace(S[0], S[2], w)):
         D = normalize(Q - O)
         depth = 0
         rayO, rayD = O, D
-        density = 1 # init value
-        isOutIntersection = 1
-        process(rayO, rayD, density, col, depth, isOutIntersection)
+        density = 1  # init value
+        is_outside_object = 1
+        process(rayO, rayD, density, col, depth, is_outside_object)
         img[h - j - 1, i, :] = np.clip(col, 0, 1)
 
 plt.imsave('fig.png', img)
