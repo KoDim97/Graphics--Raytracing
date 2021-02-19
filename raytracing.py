@@ -24,9 +24,11 @@ import matplotlib.pyplot as plt
 w = 400
 h = 300
 
+
 def normalize(x):
     x /= np.linalg.norm(x)
     return x
+
 
 def intersect_plane(O, D, P, N):
     # Return the distance from O to the intersection of the ray (O, D) with the 
@@ -39,6 +41,7 @@ def intersect_plane(O, D, P, N):
     if d < 0:
         return np.inf
     return d
+
 
 def intersect_sphere(O, D, S, R):
     # Return the distance from O to the intersection of the ray (O, D) with the 
@@ -59,11 +62,13 @@ def intersect_sphere(O, D, S, R):
             return t1 if t0 < 0 else t0
     return np.inf
 
+
 def intersect(O, D, obj):
     if obj['type'] == 'plane':
         return intersect_plane(O, D, obj['position'], obj['normal'])
     elif obj['type'] == 'sphere':
         return intersect_sphere(O, D, obj['position'], obj['radius'])
+
 
 def get_normal(obj, M):
     # Find normal.
@@ -72,12 +77,14 @@ def get_normal(obj, M):
     elif obj['type'] == 'plane':
         N = obj['normal']
     return N
-    
+
+
 def get_color(obj, M):
     color = obj['color']
     if not hasattr(color, '__len__'):
         color = color(M)
     return color
+
 
 def trace_ray(rayO, rayD):
     # Find first point of intersection with the scene.
@@ -98,36 +105,47 @@ def trace_ray(rayO, rayD):
     color = get_color(obj, M)
     toL = normalize(L - M)
     toO = normalize(O - M)
-    # Shadow: find if the point is shadowed or not.
-    l = [intersect(M + N * .0001, toL, obj_sh) 
+    # Calculate final density coefficient
+    density_coef = 1.  # initial value
+    l = [(intersect(M + N * .0001, toL, obj_sh), k)
             for k, obj_sh in enumerate(scene) if k != obj_idx]
-    if l and min(l) < np.inf:
-        return
+    if l:
+        for elem in l:
+            if elem[0] < np.inf:
+                density_coef *= scene[elem[1]].get('transparency', 0.)
     # Start computing the color.
     col_ray = ambient
     # Lambert shading (diffuse).
     col_ray += obj.get('diffuse_c', diffuse_c) * max(np.dot(N, toL), 0) * color
     # Blinn-Phong shading (specular).
     col_ray += obj.get('specular_c', specular_c) * max(np.dot(N, normalize(toL + toO)), 0) ** specular_k * color_light
+    col_ray *= density_coef
     return obj, M, N, col_ray
 
-def add_sphere(position, radius, color):
-    return dict(type='sphere', position=np.array(position), 
-        radius=np.array(radius), color=np.array(color), reflection=.5)
-    
-def add_plane(position, normal):
-    return dict(type='plane', position=np.array(position), 
-        normal=np.array(normal),
-        color=lambda M: (color_plane0 
+
+def add_sphere(position, radius, color, reflection=.5,
+               transparency=0., refraction=0.):
+    return dict(type='sphere', position=np.array(position),
+                radius=np.array(radius), color=np.array(color),
+                reflection=reflection, transparency=transparency,
+                refraction=refraction)
+
+
+def add_plane(position, normal,
+              diffuse_c=.75, specular_c=.5, reflection=.25):
+    return dict(type='plane', position=np.array(position),
+                normal=np.array(normal),
+                color=lambda M: (color_plane0
             if (int(M[0] * 2) % 2) == (int(M[2] * 2) % 2) else color_plane1),
-        diffuse_c=.75, specular_c=.5, reflection=.25)
-    
+                diffuse_c=diffuse_c, specular_c=specular_c, refraction=reflection)
+
+
 # List of objects.
 color_plane0 = 1. * np.ones(3)
 color_plane1 = 0. * np.ones(3)
-scene = [add_sphere([.75, .1, 1.], .6, [0., 0., 1.]),
-         add_sphere([-.75, .1, 2.25], .6, [.5, .223, .5]),
-         add_sphere([-2.75, .1, 3.5], .6, [1., .572, .184]),
+scene = [add_sphere([.75, .1, 1.], .6, [0., 0., 1.], transparency=.6, refraction=1.2),
+         add_sphere([-.75, .1, 2.25], .6, [.5, .223, .5], transparency=.7, refraction=1.),
+         add_sphere([-2.75, .1, 3.5], .6, [1., .572, .184], transparency=.8, refraction=.9),
          add_plane([0., -.5, 0.], [0., 1., 0.]),
     ]
 
@@ -151,28 +169,62 @@ r = float(w) / h
 # Screen coordinates: x0, y0, x1, y1.
 S = (-1., -1. / r + .25, 1., 1. / r + .25)
 
+
+# Calculate direction of refraction ray
+def refract(v, n, q):
+    nv = np.dot(n, v)
+    if nv > 0:
+        return refract(v, n * -1, 1 / q)
+    a = 1 / q
+    D = 1 - a * a * (1 - nv * nv)
+    if D < 0:
+        return None
+    b = nv * a + np.math.sqrt(D)
+    return (a * v) - (b * n)
+
+
+def process(rayO, rayD, density, col, depth, is_outside_object):
+    if depth >= depth_max:
+        return True
+
+    traced_ray = trace_ray(rayO, rayD)
+    if not traced_ray:
+        return False
+
+    obj, M, N, col_ray = traced_ray
+    # Getting new color
+    col += density * (1 - obj.get('transparency', 0.)) * col_ray
+
+    # Reflection: create a new ray.
+    rayO1, rayD1 = M + N * is_outside_object * .0001, normalize(rayD - 2 * np.dot(rayD, N) * N)
+    if process(rayO1, rayD1, density * obj.get('reflection', 1.), col, depth + 1, is_outside_object):
+        return False
+
+    # Refraction: create a new ray.
+    direction = refract(rayD, N, obj.get('refraction', 1.))
+    if direction is None:
+        return False
+    rayO2, rayD2 = M - N * is_outside_object * .0001, direction
+    if process(rayO2, rayD2, density * obj.get('transparency', 1.), col, depth + 1, is_outside_object * (-1)):
+        return False
+
+    return False
+
+
 # Loop through all pixels.
 for i, x in enumerate(np.linspace(S[0], S[2], w)):
     if i % 10 == 0:
-        print i / float(w) * 100, "%"
+        print(i / float(w) * 100, "%")
+
     for j, y in enumerate(np.linspace(S[1], S[3], h)):
         col[:] = 0
         Q[:2] = (x, y)
         D = normalize(Q - O)
         depth = 0
         rayO, rayD = O, D
-        reflection = 1.
-        # Loop through initial and secondary rays.
-        while depth < depth_max:
-            traced = trace_ray(rayO, rayD)
-            if not traced:
-                break
-            obj, M, N, col_ray = traced
-            # Reflection: create a new ray.
-            rayO, rayD = M + N * .0001, normalize(rayD - 2 * np.dot(rayD, N) * N)
-            depth += 1
-            col += reflection * col_ray
-            reflection *= obj.get('reflection', 1.)
+        density = 1  # init value
+        is_outside_object = 1
+        process(rayO, rayD, density, col, depth, is_outside_object)
         img[h - j - 1, i, :] = np.clip(col, 0, 1)
 
 plt.imsave('fig.png', img)
